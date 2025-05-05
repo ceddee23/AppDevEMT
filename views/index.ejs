@@ -1,0 +1,146 @@
+<%- include('partials/header') %>
+
+<body class="<%= weather ? (weather.weather[0]?.main.toLowerCase() || 'default') : 'default' %>">
+   <div class="spinner-border text-primary" role="status" id="loader">
+    <span class="visually-hidden">Loading...</span>
+  </div>
+ 
+  <div class="container py-5">
+     <h1 class="text-center mb-4">🌤️ Weather & Air Quality Dashboard</h1>
+
+    <form action="/manual" method="POST" class="mb-3 d-flex justify-content-center">
+     <input type="text" name="city" placeholder="Enter city" class="form-control w-50 me-2" required>
+     <button type="submit" class="btn btn-primary me-2">Search</button>
+     <button id="use-location" type="button" class="btn btn-outline-secondary">Use My Location</button>
+    </form>
+
+<div id="location-success" class="alert alert-success text-center d-none mb-4" role="alert">
+  Location retrieved successfully!
+</div>
+
+    <% if (error) { %>
+      <div class="alert alert-danger text-center mb-4"><%= error %></div>
+    <% } %>
+
+    <% if (weather) { %>
+      <!-- Current Weather -->
+      <div class="card text-center mb-4 shadow">
+        <div class="card-body">
+          <h2 class="card-title"><%= weather.name %>, <%= weather.sys.country %></h2>
+          <img src="http://openweathermap.org/img/wn/<%= weather.weather[0].icon %>@2x.png" alt="Weather Icon" />
+          <h5 class="text-capitalize"><%= weather.weather[0].description %></h5>
+          <h3 class="my-2"><%= weather.main.temp %>°C</h3>
+          <p>
+            <strong>Humidity:</strong> <%= weather.main.humidity %>% |
+            <strong>Wind:</strong> <%= weather.wind.speed %> m/s |
+            <strong>Pressure:</strong> <%= weather.main.pressure %> hPa
+          </p>
+          <p>
+            <strong>Sunrise:</strong> <%= new Date(weather.sys.sunrise * 1000).toLocaleTimeString() %> |
+            <strong>Sunset:</strong> <%= new Date(weather.sys.sunset * 1000).toLocaleTimeString() %>
+          </p>
+        </div>
+      </div>
+
+      <!-- Air Quality -->
+      <% if (airPollution) { %>
+        <div class="card text-center mb-5 shadow">
+          <div class="card-body">
+            <h4 class="card-title">🌫️ Air Quality Index (AQI)</h4>
+            <h5>AQI Level: <%= airPollution.main.aqi %> -
+              <% switch (airPollution.main.aqi) {
+                case 1: %> Good <% break;
+                case 2: %> Fair <% break;
+                case 3: %> Moderate <% break;
+                case 4: %> Poor <% break;
+                case 5: %> Very Poor <% break;
+              } %>
+            </h5>
+            <p>
+              <strong>PM2.5:</strong> <%= airPollution.components.pm2_5 %> µg/m³ |
+              <strong>PM10:</strong> <%= airPollution.components.pm10 %> µg/m³ |
+              <strong>CO:</strong> <%= airPollution.components.co %> µg/m³
+            </p>
+          </div>
+        </div>
+      <% } %>
+
+      <!-- 5-Day Forecast -->
+      <% if (forecast && forecast.length > 0) { %>
+        <h3 class="text-center mb-3">📅 5-Day Forecast</h3>
+        <div class="row justify-content-center g-4 mb-5">
+          <% forecast.forEach(day => { %>
+            <div class="col-md-2 col-sm-4 col-6">
+              <div class="card text-center p-3 shadow-sm">
+                <p><strong><%= new Date(day.dt_txt).toLocaleDateString('en-US', {
+                  weekday: 'short', month: 'short', day: 'numeric'
+                }) %></strong></p>
+                <img src="http://openweathermap.org/img/wn/<%= day.weather[0].icon %>@2x.png" alt="icon">
+                <p><%= Math.round(day.main.temp) %>°C</p>
+                <small class="text-capitalize"><%= day.weather[0].description %></small>
+              </div>
+            </div>
+          <% }); %>
+        </div>
+      <% } %>
+
+      <!-- Hourly Forecast -->
+      <% if (hourlyForecast && hourlyForecast.length > 0) { %>
+        <h3 class="text-center mb-3">⏰ Hourly Forecast</h3>
+        <div class="row justify-content-center g-4 mb-4">
+          <% hourlyForecast.forEach(hour => { %>
+            <div class="col-md-2 col-sm-4 col-6">
+              <div class="card text-center p-3 shadow-sm">
+                <p><strong><%= new Date(hour.dt_txt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) %></strong></p>
+                <img src="http://openweathermap.org/img/wn/<%= hour.weather[0].icon %>@2x.png" alt="icon">
+                <p><%= Math.round(hour.main.temp) %>°C</p>
+                <small class="text-capitalize"><%= hour.weather[0].description %></small>
+              </div>
+            </div>
+          <% }); %>
+        </div>
+      <% } %>
+    <% } %>
+  </div>
+
+ <script>
+  window.onload = function () {
+    document.getElementById("loader").style.display = "none";
+
+    document.getElementById("use-location").onclick = function () {
+      if ("geolocation" in navigator) {
+        navigator.geolocation.getCurrentPosition(async (position) => {
+          const lat = position.coords.latitude;
+          const lon = position.coords.longitude;
+
+          // ✅ Show success alert
+          const alertBox = document.getElementById("location-success");
+          alertBox.classList.remove("d-none");
+
+          // Optionally auto-hide after 3 seconds
+          setTimeout(() => {
+            alertBox.classList.add("d-none");
+          }, 3000);
+
+          const response = await fetch("/location", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json"
+            },
+            body: JSON.stringify({ lat, lon })
+          });
+
+          const html = await response.text();
+          document.open();
+          document.write(html);
+          document.close();
+        }, () => {
+          alert("Geolocation denied. Please try manually.");
+        });
+      }
+    };
+  };
+</script>
+
+
+<%- include('partials/footer') %>
