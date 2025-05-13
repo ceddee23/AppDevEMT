@@ -1,22 +1,27 @@
 <%- include('partials/header') %>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
 <body class="<%= weather ? (weather.weather[0]?.main.toLowerCase() || 'default') : 'default' %>">
-   <div class="spinner-border text-primary" role="status" id="loader">
+  <div class="spinner-border text-primary" role="status" id="loader">
     <span class="visually-hidden">Loading...</span>
   </div>
- 
+
   <div class="container py-5">
-     <h1 class="text-center mb-4">🌤️ Weather & Air Quality Dashboard</h1>
+    <h1 class="text-center mb-4">🌤️ Weather & Air Quality Dashboard</h1>
+    
+    <% if (userName) { %>
+      <p class="text-center">Welcome, <%= userName %>!</p>
+    <% } %>
 
     <form action="/manual" method="POST" class="mb-3 d-flex justify-content-center">
-     <input type="text" name="city" placeholder="Enter city" class="form-control w-50 me-2" required>
-     <button type="submit" class="btn btn-primary me-2">Search</button>
-     <button id="use-location" type="button" class="btn btn-outline-secondary">Use My Location</button>
+      <input type="text" name="city" placeholder="Enter city" class="form-control w-50 me-2" required>
+      <button type="submit" class="btn btn-primary me-2">Search</button>
+      <button id="use-location" type="button" class="btn btn-outline-secondary">Use My Location</button>
     </form>
 
-<div id="location-success" class="alert alert-success text-center d-none mb-4" role="alert">
-  Location retrieved successfully!
-</div>
+    <div id="location-success" class="alert alert-success text-center d-none mb-4" role="alert">
+      Location retrieved successfully!
+    </div>
 
     <% if (error) { %>
       <div class="alert alert-danger text-center mb-4"><%= error %></div>
@@ -47,7 +52,7 @@
         <div class="card text-center mb-5 shadow">
           <div class="card-body">
             <h4 class="card-title">🌫️ Air Quality Index (AQI)</h4>
-            <h5>AQI Level: <%= airPollution.main.aqi %> -
+            <h5>AQI Level: <%= airPollution.main.aqi %> - 
               <% switch (airPollution.main.aqi) {
                 case 1: %> Good <% break;
                 case 2: %> Fair <% break;
@@ -72,9 +77,7 @@
           <% forecast.forEach(day => { %>
             <div class="col-md-2 col-sm-4 col-6">
               <div class="card text-center p-3 shadow-sm">
-                <p><strong><%= new Date(day.dt_txt).toLocaleDateString('en-US', {
-                  weekday: 'short', month: 'short', day: 'numeric'
-                }) %></strong></p>
+                <p><strong><%= new Date(day.dt_txt).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) %></strong></p>
                 <img src="http://openweathermap.org/img/wn/<%= day.weather[0].icon %>@2x.png" alt="icon">
                 <p><%= Math.round(day.main.temp) %>°C</p>
                 <small class="text-capitalize"><%= day.weather[0].description %></small>
@@ -103,44 +106,77 @@
     <% } %>
   </div>
 
- <script>
-  window.onload = function () {
-    document.getElementById("loader").style.display = "none";
+  <!-- Chart for Search Stats -->
+  <canvas id="searchChart" width="400" height="200"></canvas>
 
-    document.getElementById("use-location").onclick = function () {
-      if ("geolocation" in navigator) {
-        navigator.geolocation.getCurrentPosition(async (position) => {
-          const lat = position.coords.latitude;
-          const lon = position.coords.longitude;
+  <script>
+    window.onload = async function () {
+      // Fetch search data
+      const response = await fetch('/search-stats');
+      const searchData = await response.json();
 
-          // ✅ Show success alert
-          const alertBox = document.getElementById("location-success");
-          alertBox.classList.remove("d-none");
+      const cities = searchData.map(data => data.city);
+      const searchCounts = searchData.map(data => data.count);
 
-          // Optionally auto-hide after 3 seconds
-          setTimeout(() => {
-            alertBox.classList.add("d-none");
-          }, 3000);
+      // Create the chart
+      const ctx = document.getElementById('searchChart').getContext('2d');
+      new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: cities,
+          datasets: [{
+            label: 'Number of Searches',
+            data: searchCounts,
+            backgroundColor: ['#FF5733', '#33FF57', '#3357FF'], // Array of colors for each bar
+    borderColor: '#000000', // Border color for the bars
+            borderWidth: 1
+          }]
+        },
+        options: {
+          scales: {
+            y: {
+              beginAtZero: true
+            }
+          }
+        }
+      });
 
-          const response = await fetch("/location", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json"
-            },
-            body: JSON.stringify({ lat, lon })
+      // Handle geolocation
+      document.getElementById("loader").style.display = "none";
+
+      document.getElementById("use-location").onclick = function () {
+        if ("geolocation" in navigator) {
+          navigator.geolocation.getCurrentPosition(async (position) => {
+            const lat = position.coords.latitude;
+            const lon = position.coords.longitude;
+
+            // ✅ Show success alert
+            const alertBox = document.getElementById("location-success");
+            alertBox.classList.remove("d-none");
+
+            // Optionally auto-hide after 3 seconds
+            setTimeout(() => {
+              alertBox.classList.add("d-none");
+            }, 3000);
+
+            const response = await fetch("/location", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json"
+              },
+              body: JSON.stringify({ lat, lon })
+            });
+
+            const html = await response.text();
+            document.open();
+            document.write(html);
+            document.close();
+          }, () => {
+            alert("Geolocation denied. Please try manually.");
           });
-
-          const html = await response.text();
-          document.open();
-          document.write(html);
-          document.close();
-        }, () => {
-          alert("Geolocation denied. Please try manually.");
-        });
-      }
+        }
+      };
     };
-  };
-</script>
-
+  </script>
 
 <%- include('partials/footer') %>
