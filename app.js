@@ -3,10 +3,9 @@ const axios = require('axios');
 const bodyParser = require('body-parser');
 const bcrypt = require('bcryptjs');
 const session = require('express-session');
-const sqlite3 = require('sqlite3').verbose();
+const { Pool } = require('pg');
 require('dotenv').config();
 
-// Initialize Express
 const app = express();
 const PORT = process.env.PORT || 8000;
 
@@ -23,72 +22,67 @@ app.use(session({
   saveUninitialized: true
 }));
 
-// SQLite Database connection
-const db = new sqlite3.Database('./user.db', (err) => {
-  if (err) {
-    console.error("Error opening SQLite database: " + err.message);
-  } else {
-    console.log("Connected to the SQLite database.");
-
-    // Ensure the 'search_log' table has the 'lat' and 'lon' columns if they don't exist
-    db.all(`PRAGMA table_info(search_log);`, (err, columns) => {
-      if (err) {
-        console.error(err);
-      } else {
-        const columnNames = columns.map(col => col.name);
-
-        if (!columnNames.includes('lat')) {
-          db.run('ALTER TABLE search_log ADD COLUMN lat REAL;', (err) => {
-            if (err) {
-              console.error('Error adding lat column:', err.message);
-            } else {
-              console.log('Added lat column to search_log');
-            }
-          });
-        }
-
-        if (!columnNames.includes('lon')) {
-          db.run('ALTER TABLE search_log ADD COLUMN lon REAL;', (err) => {
-            if (err) {
-              console.error('Error adding lon column:', err.message);
-            } else {
-              console.log('Added lon column to search_log');
-            }
-          });
-        }
-      }
-    });
-
-    // Create Users table if it doesn't exist
-    db.run(`CREATE TABLE IF NOT EXISTS users (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      name TEXT,
-      email TEXT UNIQUE,
-      password TEXT
-    )`);
-
-    // Create search_log table if it doesn't exist
-    db.run(`CREATE TABLE IF NOT EXISTS search_log (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      city TEXT,
-      lat REAL,
-      lon REAL
-    )`);
+// PostgreSQL Database connection
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: {
+    rejectUnauthorized: false
   }
 });
 
+pool.connect((err, client, done) => {
+  if (err) {
+    console.error("Error connecting to PostgreSQL database: " + err.message);
+  } else {
+    console.log("Connected to PostgreSQL database.");
+
+    // Create 'users' table if it doesn't exist
+    client.query(`
+      CREATE TABLE IF NOT EXISTS users (
+        id SERIAL PRIMARY KEY,
+        name TEXT,
+        email TEXT UNIQUE,
+        password TEXT
+      );
+    `, (err) => {
+      if (err) {
+        console.error(err);
+      } else {
+        console.log('Users table is ready.');
+      }
+    });
+
+    // Create 'search_log' table if it doesn't exist
+    client.query(`
+      CREATE TABLE IF NOT EXISTS search_log (
+        id SERIAL PRIMARY KEY,
+        city TEXT,
+        lat REAL,
+        lon REAL
+      );
+    `, (err) => {
+      if (err) {
+        console.error(err);
+      } else {
+        console.log('Search log table is ready.');
+      }
+    });
+
+    done();
+  }
+});
 
 // Routes for login and register
 app.get('/login', (req, res) => {
   if (req.session.userId) {
-    return res.redirect('/');  // Redirect to home page if already logged in
+    return res.redirect('/');
   }
   res.render('login', { error: null });
 });
 
 app.get('/register', (req, res) => {
   if (req.session.userId) {
-    return res.redirect('/');  // Redirect to home page if already logged in
+    return res.redirect('/');
   }
   res.render('register', { error: null });
 });
@@ -97,11 +91,13 @@ app.get('/register', (req, res) => {
 app.post('/login', async (req, res) => {
   const { email, password } = req.body;
 
-  db.get('SELECT * FROM users WHERE email = ?', [email], async (err, user) => {
+  pool.query('SELECT * FROM users WHERE email = $1', [email], async (err, result) => {
     if (err) {
       console.error(err);
       return res.render('login', { error: 'Error occurred. Please try again.' });
     }
+
+    const user = result.rows[0];
 
     if (!user) {
       return res.render('login', { error: 'User not found.' });
@@ -113,7 +109,7 @@ app.post('/login', async (req, res) => {
     }
 
     req.session.userId = user.id;
-    req.session.userName = user.name || user.email; // Store userName in session
+    req.session.userName = user.name || user.email;
     res.redirect('/');
   });
 });
@@ -126,11 +122,13 @@ app.post('/register', async (req, res) => {
     return res.render('register', { error: 'Passwords do not match.' });
   }
 
-  db.get('SELECT * FROM users WHERE email = ?', [email], async (err, existingUser) => {
+  pool.query('SELECT * FROM users WHERE email = $1', [email], async (err, result) => {
     if (err) {
       console.error(err);
       return res.render('register', { error: 'Error occurred. Please try again.' });
     }
+
+    const existingUser = result.rows[0];
 
     if (existingUser) {
       return res.render('register', { error: 'Email already registered.' });
@@ -138,7 +136,7 @@ app.post('/register', async (req, res) => {
 
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    db.run('INSERT INTO users (name, email, password) VALUES (?, ?, ?)', [name, email, hashedPassword], (err) => {
+    pool.query('INSERT INTO users (name, email, password) VALUES ($1, $2, $3)', [name, email, hashedPassword], (err) => {
       if (err) {
         console.error(err);
         return res.render('register', { error: 'Error occurred. Please try again.' });
@@ -158,7 +156,7 @@ app.get('/logout', (req, res) => {
 // Weather Routes
 app.get('/', (req, res) => {
   if (!req.session.userId) {
-    return res.redirect('/login');  // Redirect to login if not logged in
+    return res.redirect('/login');
   }
 
   res.render('index', {
@@ -167,7 +165,7 @@ app.get('/', (req, res) => {
     hourlyForecast: null,
     airPollution: null,
     error: null,
-    userName: req.session.userName || 'Guest'  // Pass the userName from session
+    userName: req.session.userName || 'Guest'
   });
 });
 
@@ -195,7 +193,7 @@ app.post('/location', async (req, res) => {
     const airPollution = airPollutionRes.data?.list[0] || null;
 
     // Log the geolocation search in the search_log table
-    db.run('INSERT INTO search_log (city, lat, lon) VALUES (?, ?, ?)', ['User Location', lat, lon], (err) => {
+    pool.query('INSERT INTO search_log (city, lat, lon) VALUES ($1, $2, $3)', ['User Location', lat, lon], (err) => {
       if (err) {
         console.error(err);
       } else {
@@ -237,7 +235,7 @@ app.post('/manual', async (req, res) => {
       hourlyForecast: null,
       airPollution: null,
       error: 'Please enter a city name.',
-      userName: req.session.userName || 'Guest'  // Pass userName from session
+      userName: req.session.userName || 'Guest'
     });
   }
 
@@ -264,11 +262,11 @@ app.post('/manual', async (req, res) => {
     const airPollution = airPollutionRes.data?.list[0] || null;
 
     // Log the city search in the search_log table
-    db.run('INSERT INTO search_log (city, lat, lon) VALUES (?, ?, ?)', [city, lat, lon], (err) => {
+    pool.query('INSERT INTO search_log (city, lat, lon) VALUES ($1, $2, $3)', [city, lat, lon], (err) => {
       if (err) {
         console.error(err);
       } else {
-        console.log('Search term logged successfully');
+        console.log('Manual search logged successfully');
       }
     });
 
@@ -278,7 +276,7 @@ app.post('/manual', async (req, res) => {
       hourlyForecast,
       airPollution,
       error: null,
-      userName: req.session.userName || 'Guest'  // Pass userName from session
+      userName: req.session.userName || 'Guest'
     });
 
   } catch (err) {
@@ -288,28 +286,30 @@ app.post('/manual', async (req, res) => {
       forecast: null,
       hourlyForecast: null,
       airPollution: null,
-      error: 'City not found or API failed. Please try again.',
-      userName: req.session.userName || 'Guest'  // Pass userName from session
+      error: 'Unable to retrieve weather data. Please try again.',
+      userName: req.session.userName || 'Guest'
     });
   }
 });
 
-// Search stats route
-app.get('/search-stats', (req, res) => {
-  db.all('SELECT city, COUNT(*) AS count FROM search_log GROUP BY city ORDER BY count DESC', (err, rows) => {
-    if (err) {
-      return res.status(500).send('Error retrieving search stats');
-    }
-
-    const searchData = rows.map(row => ({
-      city: row.city,
-      count: row.count
-    }));
-
-    res.json(searchData);
-  });
+// Route to provide search statistics for the chart
+app.get('/search-stats', async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT city, COUNT(*) as count
+      FROM search_log
+      GROUP BY city
+      ORDER BY count DESC
+      LIMIT 10;
+    `);
+    res.json(result.rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to fetch search statistics.' });
+  }
 });
 
+// Start server
 app.listen(PORT, () => {
-  console.log(`✅ Server running at http://localhost:${PORT}`);
+  console.log(`Server is running on port ${PORT}`);
 });
