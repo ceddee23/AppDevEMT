@@ -149,9 +149,14 @@ app.post('/register', async (req, res) => {
 // Logout route
 app.get('/logout', (req, res) => {
   req.session.destroy((err) => {
-    res.redirect('/login');
+    if (err) {
+      return res.status(500).send("There was an issue logging you out. Please try again.");
+    }
+    
+    res.redirect('/login');  // Redirect to login page after successful logout
   });
 });
+
 
 // Weather Routes
 app.get('/', (req, res) => {
